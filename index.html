@@ -154,6 +154,20 @@
   .stat-note{ font-size:11.5px; color:var(--text-faint); margin-top:12px; line-height:1.5; }
 
   .footer-actions{ display:flex; justify-content:flex-end; margin-top:14px; }
+
+  .key-bar{
+    display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+    background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+    padding:14px 16px; margin-bottom:24px; font-size:13px;
+  }
+  .key-bar label{ font-weight:600; white-space:nowrap; }
+  .key-bar input[type=password]{
+    flex:1; min-width:220px; background:var(--surface-2); border:1px solid var(--border); color:var(--text);
+    border-radius:7px; padding:8px 10px; font-family:var(--mono); font-size:13px; outline:none;
+  }
+  .key-bar input[type=password]:focus{ border-color:var(--accent); }
+  .key-bar .btn-ghost{ padding:8px 14px; font-size:13px; }
+  .key-bar .key-status{ font-size:12px; color:var(--text-dim); flex-basis:100%; }
 </style>
 </head>
 <body>
@@ -162,6 +176,14 @@
   <p class="eyebrow">CS Toolkit</p>
   <h1>SessionHub Support Assistant</h1>
   <p class="sub">Ask a support question about SessionHub, a fictional session-scheduling platform. The assistant answers only from the knowledge base on the right, cites its source, and flags anything it can't resolve for a human agent instead of guessing.</p>
+
+  <div class="key-bar">
+    <label for="apiKeyInput">Claude API key</label>
+    <input type="password" id="apiKeyInput" placeholder="sk-ant-..." autocomplete="off" />
+    <button class="btn btn-ghost" id="saveKeyBtn">Save</button>
+    <button class="btn btn-ghost" id="clearKeyBtn">Clear</button>
+    <span class="key-status" id="apiKeyStatus">Stored only in this browser's localStorage. See README for details.</span>
+  </div>
 
   <div class="grid">
 
@@ -225,7 +247,39 @@
 
 <script>
 const STORAGE_KEY = 'sessionhub-assistant-log';
+const API_KEY_STORAGE_KEY = 'sessionhub-assistant-apiKey';
 let log = [];
+
+function getStoredApiKey(){
+  return localStorage.getItem(API_KEY_STORAGE_KEY) || '';
+}
+
+function setupApiKeyBar(){
+  const input = document.getElementById('apiKeyInput');
+  const status = document.getElementById('apiKeyStatus');
+  const existing = getStoredApiKey();
+
+  if (existing){
+    input.value = existing;
+    status.textContent = "Key loaded from this browser's localStorage.";
+  }
+
+  document.getElementById('saveKeyBtn').addEventListener('click', () => {
+    const value = input.value.trim();
+    if (!value){
+      status.textContent = 'Enter a key before saving.';
+      return;
+    }
+    localStorage.setItem(API_KEY_STORAGE_KEY, value);
+    status.textContent = "Key saved to this browser's localStorage.";
+  });
+
+  document.getElementById('clearKeyBtn').addEventListener('click', () => {
+    localStorage.removeItem(API_KEY_STORAGE_KEY);
+    input.value = '';
+    status.textContent = 'Key cleared.';
+  });
+}
 
 const KB_ARTICLES = [
   {
@@ -374,11 +428,11 @@ function renderLog(){
   container.scrollTop = container.scrollHeight;
 }
 
-async function loadLog(){
+function loadLog(){
   try{
-    const res = await window.storage.get(STORAGE_KEY, false);
-    if (res && res.value){
-      log = JSON.parse(res.value);
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw){
+      log = JSON.parse(raw);
     }
   }catch(e){
     log = [];
@@ -386,9 +440,9 @@ async function loadLog(){
   renderLog();
 }
 
-async function saveLog(){
+function saveLog(){
   try{
-    await window.storage.set(STORAGE_KEY, JSON.stringify(log), false);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(log));
   }catch(e){
     // Non-fatal — conversation still renders for this session even if save fails.
   }
@@ -407,15 +461,27 @@ async function askQuestion(question){
     return;
   }
 
+  const apiKey = getStoredApiKey();
+  if (!apiKey){
+    errBox.textContent = 'Add your Claude API key above to ask a question.';
+    errBox.style.display = 'block';
+    return;
+  }
+
   askBtn.disabled = true;
   askBtnLabel.innerHTML = '<span class="spinner"></span> Thinking...';
 
   try{
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true"
+      },
       body: JSON.stringify({
-        model: "claude-sonnet-4-6",
+        model: "claude-sonnet-5",
         max_tokens: 1000,
         system: buildSystemPrompt(),
         messages: [{ role: "user", content: question }]
@@ -423,7 +489,9 @@ async function askQuestion(question){
     });
 
     if (!response.ok){
-      throw new Error('Request failed');
+      const errBody = await response.json().catch(() => ({}));
+      const message = errBody?.error?.message || 'Request failed';
+      throw new Error(message);
     }
 
     const data = await response.json();
@@ -456,7 +524,7 @@ async function askQuestion(question){
     document.getElementById('questionInput').value = '';
 
   }catch(err){
-    errBox.textContent = "Couldn't reach the assistant. Check your connection and try again.";
+    errBox.textContent = `Couldn't reach the assistant: ${err.message}`;
     errBox.style.display = 'block';
   }finally{
     askBtn.disabled = false;
@@ -494,6 +562,7 @@ document.getElementById('clearBtn').addEventListener('click', async () => {
   renderLog();
 });
 
+setupApiKeyBar();
 renderKB('');
 loadLog();
 </script>
