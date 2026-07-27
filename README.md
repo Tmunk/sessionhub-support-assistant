@@ -11,11 +11,15 @@ The original B2C work followed a pattern that shows up across several projects i
 ## How it works
 
 - 8 short knowledge base articles for a fictional platform called SessionHub
-- Every question is sent to Claude (Anthropic's model) with instructions to answer using only those articles
+- With an API key set, every question is sent to Claude (Anthropic's model) with instructions to answer using only those articles
 - The model returns structured output: an answer, which article(s) backed it, and whether the question should be escalated to a human instead
 - Grounded answers show a clickable citation chip linking to the source excerpt
 - Anything outside the knowledge base — refund disputes, security concerns, anything sensitive — gets flagged with an escalation banner instead of a guessed answer
 - A running counter tracks answered-from-KB vs. escalated-to-human, which is the actual metric real support/CS Ops teams are measured on for self-serve tooling
+
+### Without an API key
+
+Rather than blocking every question until you bring a key, the page falls back to a plain keyword search against the 8 articles — no AI, no cost, works instantly for anyone. It's tagged **Keyword match (no AI)** in a neutral gray, deliberately different from the teal/gold AI-derived states, because it's a genuinely different mechanism: word overlap, not understanding. It can't paraphrase, and it can't reliably judge nuance the way the real model does — "how do I reset my password" and "can I get a refund" might share zero useful keywords, so a keyword-only match is a rough approximation of the assistant, not a replacement for it. Add a key for the real thing.
 
 ## Try it live
 

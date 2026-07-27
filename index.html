@@ -111,6 +111,7 @@
   }
   .a-grounded{ background:rgba(20,184,166,0.07); border-color:rgba(20,184,166,0.3); }
   .a-escalate{ background:var(--escalate-soft); border-color:rgba(240,180,41,0.4); }
+  .a-keyword{ background:var(--surface-2); border-color:var(--border); }
 
   .a-status{
     display:inline-flex; align-items:center; gap:5px; font-family:var(--mono); font-size:10.5px; font-weight:700;
@@ -119,6 +120,7 @@
   }
   .a-status.grounded{ background:var(--grounded); }
   .a-status.escalate{ background:var(--escalate); }
+  .a-status.keyword{ background:var(--text-faint); }
   .a-status .dot{ width:5px; height:5px; border-radius:50%; background:#fff; }
 
   .cite-row{ display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
@@ -329,6 +331,28 @@ const KB_ARTICLES = [
   }
 ];
 
+const STOPWORDS = new Set(['a','an','the','is','are','was','were','do','does','did','i','my','me','you','your','it','its','to','of','for','in','on','at','and','or','but','can','how','what','why','when','where','will','would','should','could','this','that','these','those','with','about','if','not','have','has','had','be','been','get','got','need','want']);
+
+function tokenize(text){
+  return text.toLowerCase().replace(/[^a-z0-9\s]/g,' ').split(/\s+/).filter(w => w && !STOPWORDS.has(w));
+}
+
+// No-key fallback: plain word-overlap scoring against the KB, not AI. Can't
+// paraphrase or judge nuance the way the real model does — it's a search
+// box, not an assistant. See README for the tradeoff.
+function keywordMatch(question){
+  const qWords = tokenize(question);
+  if (qWords.length === 0) return [];
+  return KB_ARTICLES
+    .map(a => {
+      const haystack = new Set(tokenize(a.title + ' ' + a.body));
+      const score = qWords.reduce((sum, w) => sum + (haystack.has(w) ? 1 : 0), 0);
+      return { article: a, score };
+    })
+    .filter(m => m.score > 0)
+    .sort((a, b) => b.score - a.score);
+}
+
 function escapeHtml(str){
   return String(str)
     .replace(/&/g,'&amp;')
@@ -389,8 +413,9 @@ function renderLog(){
   }
 
   container.innerHTML = log.map((entry, idx) => {
-    const statusClass = entry.escalate ? 'escalate' : 'grounded';
-    const statusLabel = entry.escalate ? 'Escalated to human' : 'Answered from KB';
+    const statusClass = entry.isKeywordMatch ? 'keyword' : (entry.escalate ? 'escalate' : 'grounded');
+    const statusLabel = entry.isKeywordMatch ? 'Keyword match (no AI)' : (entry.escalate ? 'Escalated to human' : 'Answered from KB');
+    const blockClass = entry.isKeywordMatch ? 'a-keyword' : (entry.escalate ? 'a-escalate' : 'a-grounded');
     const citeHtml = (!entry.escalate && entry.source_ids && entry.source_ids.length)
       ? `<div class="cite-row">${entry.source_ids.map(id => {
           const art = KB_ARTICLES.find(a => a.id === id);
@@ -410,7 +435,7 @@ function renderLog(){
     return `
       <div class="entry">
         <div class="q-bubble">${escapeHtml(entry.question)}</div>
-        <div class="a-block ${entry.escalate ? 'a-escalate' : 'a-grounded'}">
+        <div class="a-block ${blockClass}">
           <div class="a-status ${statusClass}"><span class="dot"></span>${statusLabel}</div>
           <div>${escapeHtml(entry.answer)}</div>
           ${citeHtml}
@@ -468,8 +493,31 @@ async function askQuestion(question){
 
   const apiKey = getStoredApiKey();
   if (!apiKey){
-    errBox.textContent = 'Add your Claude API key above to ask a question.';
-    errBox.style.display = 'block';
+    const matches = keywordMatch(question);
+    if (matches.length === 0){
+      log.push({
+        question: question,
+        answer: "No knowledge base article closely matches this one — this is where it would normally be escalated to a human agent.",
+        source_ids: [],
+        escalate: true,
+        escalation_reason: 'No API key set, and no article matched closely enough by keyword.',
+        isKeywordMatch: true
+      });
+    } else {
+      const top = matches.slice(0, 2).map(m => m.article.id);
+      const titles = matches.slice(0, 2).map(m => m.article.title).join(' and ');
+      log.push({
+        question: question,
+        answer: `Closest knowledge base match: ${titles}. This is a plain keyword match, not an AI-generated answer — add your API key above for a real grounded response with escalation judgment.`,
+        source_ids: top,
+        escalate: false,
+        escalation_reason: '',
+        isKeywordMatch: true
+      });
+    }
+    saveLog();
+    renderLog();
+    document.getElementById('questionInput').value = '';
     return;
   }
 
